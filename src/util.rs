@@ -1,4 +1,5 @@
 use async_trait::async_trait;
+use aws_config::BehaviorVersion;
 use aws_sdk_cognitoidentityprovider::{
     config::Region,
     error::SdkError,
@@ -23,7 +24,10 @@ impl<'a> CognitoUtil<'a, aws_sdk_cognitoidentityprovider::Client> {
     ) -> Result<CognitoUtil<'a, aws_sdk_cognitoidentityprovider::Client>, GenericServerError> {
         let region_str = config.get(&CognitoEnvConfig::CognitoRegion)?;
         let region = Region::new(region_str.clone());
-        let shared_config = aws_config::from_env().region(region).load().await;
+        let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
+            .region(region)
+            .load()
+            .await;
         let client = aws_sdk_cognitoidentityprovider::Client::new(&shared_config);
         Ok(Self { client, config })
     }
