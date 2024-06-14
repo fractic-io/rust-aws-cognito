@@ -4,22 +4,24 @@ use aws_sdk_cognitoidentityprovider::{
     error::SdkError,
     operation::list_users::{ListUsersError, ListUsersOutput},
 };
-use fractic_env_config::{EnvVariable, EnvVariables};
+use fractic_env_config::EnvVariablesWindow;
 use fractic_generic_server_error::{common::CriticalError, GenericServerError};
 
-use crate::errors::CognitoConnectionError;
+use crate::{env::CognitoEnvConfig, errors::CognitoConnectionError};
 
 // AWS Cognito utils.
 // --------------------------------------------------
 
-pub struct CognitoUtil<ClientImpl: CognitoClient> {
+pub struct CognitoUtil<'cognito_util, ClientImpl: CognitoClient> {
     client: ClientImpl,
-    config: EnvVariables,
+    config: EnvVariablesWindow<'cognito_util, CognitoEnvConfig>,
 }
 
-impl CognitoUtil<aws_sdk_cognitoidentityprovider::Client> {
-    pub async fn new(config: EnvVariables) -> Result<Self, GenericServerError> {
-        let region_str = config.get(&EnvVariable::CognitoRegion)?;
+impl<'a> CognitoUtil<'a, aws_sdk_cognitoidentityprovider::Client> {
+    pub async fn new(
+        config: EnvVariablesWindow<'a, CognitoEnvConfig>,
+    ) -> Result<CognitoUtil<'a, aws_sdk_cognitoidentityprovider::Client>, GenericServerError> {
+        let region_str = config.get(&CognitoEnvConfig::CognitoRegion)?;
         let region = Region::new(region_str.clone());
         let shared_config = aws_config::from_env().region(region).load().await;
         let client = aws_sdk_cognitoidentityprovider::Client::new(&shared_config);
@@ -27,13 +29,13 @@ impl CognitoUtil<aws_sdk_cognitoidentityprovider::Client> {
     }
 }
 
-impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
+impl<ClientImpl: CognitoClient> CognitoUtil<'_, ClientImpl> {
     pub async fn get_username_from_email(
         &self,
         email: &str,
     ) -> Result<Option<String>, GenericServerError> {
         let dbg_cxt: &'static str = "get_username_from_email";
-        let user_pool_id = self.config.get(&EnvVariable::CognitoUserPoolId)?;
+        let user_pool_id = self.config.get(&CognitoEnvConfig::CognitoUserPoolId)?;
 
         let response = self
             .client
@@ -95,9 +97,12 @@ impl CognitoClient for aws_sdk_cognitoidentityprovider::Client {
 
 #[cfg(test)]
 mod tests {
+    use crate::env::{COGNITO_REGION, COGNITO_USER_POOL_ID};
+
     use super::*;
     use aws_sdk_cognitoidentityprovider::types::UserType;
     use fractic_core::collection;
+    use fractic_env_config::{build_env_window, EnvVariables};
 
     // Mock client implemenation.
     struct MockCognitoClient {
@@ -124,12 +129,13 @@ mod tests {
         let mock_client = MockCognitoClient {
             should_find_user: true,
         };
+        let env_variables: EnvVariables<CognitoEnvConfig> = collection! {
+            COGNITO_REGION => "us-east-1".to_string(),
+            COGNITO_USER_POOL_ID => "us-east-1_123456789".to_string(),
+        };
         let cognito = CognitoUtil {
             client: mock_client,
-            config: collection! {
-                EnvVariable::CognitoRegion => "us-east-1".to_string(),
-                EnvVariable::CognitoUserPoolId => "us-east-1_123456789".to_string(),
-            },
+            config: build_env_window(&env_variables).unwrap(),
         };
         let username = cognito
             .get_username_from_email("abc@example.com")
@@ -143,33 +149,18 @@ mod tests {
         let mock_client = MockCognitoClient {
             should_find_user: false,
         };
+        let env_variables: EnvVariables<CognitoEnvConfig> = collection! {
+            COGNITO_REGION => "us-east-1".to_string(),
+            COGNITO_USER_POOL_ID => "us-east-1_123456789".to_string(),
+        };
         let cognito = CognitoUtil {
             client: mock_client,
-            config: collection! {
-                EnvVariable::CognitoRegion => "us-east-1".to_string(),
-                EnvVariable::CognitoUserPoolId => "us-east-1_123456789".to_string(),
-            },
+            config: build_env_window(&env_variables).unwrap(),
         };
         let username = cognito
             .get_username_from_email("abc@example.com")
             .await
             .unwrap();
         assert_eq!(username, None);
-    }
-
-    #[tokio::test]
-    async fn test_get_username_from_email_missing_userpoolid() {
-        let mock_client = MockCognitoClient {
-            should_find_user: true,
-        };
-        let cognito = CognitoUtil {
-            client: mock_client,
-            config: EnvVariables::default(),
-        };
-        let result = cognito.get_username_from_email("abc@example.com").await;
-        assert!(result.is_err());
-        let error_string = result.unwrap_err().to_string();
-        assert!(error_string.contains("IncorrectConfigError"));
-        assert!(error_string.contains("COGNITO_USER_POOL_ID"));
     }
 }
