@@ -5,7 +5,7 @@ use aws_sdk_cognitoidentityprovider::{
     error::SdkError,
     operation::list_users::{ListUsersError, ListUsersOutput},
 };
-use fractic_env_config::EnvVariablesWindow;
+use fractic_env_config::EnvVariables;
 use fractic_generic_server_error::{common::CriticalError, GenericServerError};
 
 use crate::{env::CognitoEnvConfig, errors::CognitoConnectionError};
@@ -13,33 +13,33 @@ use crate::{env::CognitoEnvConfig, errors::CognitoConnectionError};
 // AWS Cognito utils.
 // --------------------------------------------------
 
-pub struct CognitoUtil<'cognito_util, ClientImpl: CognitoClient> {
+pub struct CognitoUtil<ClientImpl: CognitoClient> {
     client: ClientImpl,
-    config: EnvVariablesWindow<'cognito_util, CognitoEnvConfig>,
+    env: EnvVariables<CognitoEnvConfig>,
 }
 
-impl<'a> CognitoUtil<'a, aws_sdk_cognitoidentityprovider::Client> {
+impl CognitoUtil<aws_sdk_cognitoidentityprovider::Client> {
     pub async fn new(
-        config: EnvVariablesWindow<'a, CognitoEnvConfig>,
-    ) -> Result<CognitoUtil<'a, aws_sdk_cognitoidentityprovider::Client>, GenericServerError> {
-        let region_str = config.get(&CognitoEnvConfig::CognitoRegion)?;
+        env: EnvVariables<CognitoEnvConfig>,
+    ) -> Result<CognitoUtil<aws_sdk_cognitoidentityprovider::Client>, GenericServerError> {
+        let region_str = env.get(&CognitoEnvConfig::CognitoRegion)?;
         let region = Region::new(region_str.clone());
         let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
             .region(region)
             .load()
             .await;
         let client = aws_sdk_cognitoidentityprovider::Client::new(&shared_config);
-        Ok(Self { client, config })
+        Ok(Self { client, env })
     }
 }
 
-impl<ClientImpl: CognitoClient> CognitoUtil<'_, ClientImpl> {
+impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
     pub async fn get_username_from_email(
         &self,
         email: &str,
     ) -> Result<Option<String>, GenericServerError> {
         let dbg_cxt: &'static str = "get_username_from_email";
-        let user_pool_id = self.config.get(&CognitoEnvConfig::CognitoUserPoolId)?;
+        let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?;
 
         let response = self
             .client
@@ -106,7 +106,7 @@ mod tests {
     use super::*;
     use aws_sdk_cognitoidentityprovider::types::UserType;
     use fractic_core::collection;
-    use fractic_env_config::{build_env_window, EnvVariables};
+    use fractic_env_config::EnvVariables;
 
     // Mock client implemenation.
     struct MockCognitoClient {
@@ -133,13 +133,13 @@ mod tests {
         let mock_client = MockCognitoClient {
             should_find_user: true,
         };
-        let env_variables: EnvVariables<CognitoEnvConfig> = collection! {
+        let env: EnvVariables<CognitoEnvConfig> = collection! {
             COGNITO_REGION => "us-east-1".to_string(),
             COGNITO_USER_POOL_ID => "us-east-1_123456789".to_string(),
         };
         let cognito = CognitoUtil {
             client: mock_client,
-            config: build_env_window(&env_variables).unwrap(),
+            env,
         };
         let username = cognito
             .get_username_from_email("abc@example.com")
@@ -153,13 +153,13 @@ mod tests {
         let mock_client = MockCognitoClient {
             should_find_user: false,
         };
-        let env_variables: EnvVariables<CognitoEnvConfig> = collection! {
+        let env: EnvVariables<CognitoEnvConfig> = collection! {
             COGNITO_REGION => "us-east-1".to_string(),
             COGNITO_USER_POOL_ID => "us-east-1_123456789".to_string(),
         };
         let cognito = CognitoUtil {
             client: mock_client,
-            config: build_env_window(&env_variables).unwrap(),
+            env,
         };
         let username = cognito
             .get_username_from_email("abc@example.com")
