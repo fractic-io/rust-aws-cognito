@@ -3,12 +3,20 @@ use aws_config::BehaviorVersion;
 use aws_sdk_cognitoidentityprovider::{
     config::Region,
     error::SdkError,
-    operation::list_users::{ListUsersError, ListUsersOutput},
+    operation::{
+        admin_delete_user_attributes::{
+            AdminDeleteUserAttributesError, AdminDeleteUserAttributesOutput,
+        },
+        list_users::{ListUsersError, ListUsersOutput},
+    },
 };
 use fractic_env_config::EnvVariables;
 use fractic_generic_server_error::{common::CriticalError, GenericServerError};
 
 use crate::{env::CognitoEnvConfig, errors::CognitoConnectionError};
+
+const EMAIL_ATTRIBUTE: &str = "email";
+const USER_SUB_ATTRIBUTE: &str = "sub";
 
 // AWS Cognito utils.
 // --------------------------------------------------
@@ -34,16 +42,17 @@ impl CognitoUtil<aws_sdk_cognitoidentityprovider::Client> {
 }
 
 impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
-    pub async fn get_username_from_email(
+    async fn get_username_from_attribute(
         &self,
-        email: &str,
+        attribute: &str,
+        value: &str,
     ) -> Result<Option<String>, GenericServerError> {
-        let dbg_cxt: &'static str = "get_username_from_email";
-        let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?;
+        let dbg_cxt: &'static str = "get_username_from_attribute";
+        let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?.clone();
 
         let response = self
             .client
-            .list_users(&user_pool_id, &format!("email = \"{}\"", email), 1)
+            .list_users(user_pool_id, format!("{} = \"{}\"", attribute, value), 1)
             .await
             .map_err(|e| CognitoConnectionError::with_debug(dbg_cxt, "", e.to_string()))?;
 
@@ -55,10 +64,39 @@ impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
                 user.username.ok_or(CriticalError::with_debug(
                     dbg_cxt,
                     "user found but username is missing",
-                    email.to_string(),
+                    format!("attribute: {}; value: {};", attribute, value),
                 ))
             })
             .transpose()
+    }
+
+    pub async fn get_username_from_email(
+        &self,
+        email: &str,
+    ) -> Result<Option<String>, GenericServerError> {
+        self.get_username_from_attribute(EMAIL_ATTRIBUTE, email)
+            .await
+    }
+
+    pub async fn delete_email_for_user(&self, user_sub: &str) -> Result<(), GenericServerError> {
+        let dbg_cxt: &'static str = "delete_email_for_user";
+        let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?.clone();
+
+        if let Some(username) = self
+            .get_username_from_attribute(USER_SUB_ATTRIBUTE, user_sub)
+            .await?
+        {
+            self.client
+                .admin_delete_user_attributes(
+                    user_pool_id,
+                    username,
+                    vec![EMAIL_ATTRIBUTE.to_string()],
+                )
+                .await
+                .map_err(|e| CognitoConnectionError::with_debug(dbg_cxt, "", e.to_string()))?;
+        }
+
+        Ok(())
     }
 }
 
@@ -72,10 +110,17 @@ impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
 pub trait CognitoClient {
     async fn list_users(
         &self,
-        user_pool_id: &str,
-        filter: &str,
+        user_pool_id: String,
+        filter: String,
         limit: i32,
     ) -> Result<ListUsersOutput, SdkError<ListUsersError>>;
+
+    async fn admin_delete_user_attributes(
+        &self,
+        user_pool_id: String,
+        username: String,
+        attributes: Vec<String>,
+    ) -> Result<AdminDeleteUserAttributesOutput, SdkError<AdminDeleteUserAttributesError>>;
 }
 
 // Real client implementation.
@@ -83,14 +128,28 @@ pub trait CognitoClient {
 impl CognitoClient for aws_sdk_cognitoidentityprovider::Client {
     async fn list_users(
         &self,
-        user_pool_id: &str,
-        filter: &str,
+        user_pool_id: String,
+        filter: String,
         limit: i32,
     ) -> Result<ListUsersOutput, SdkError<ListUsersError>> {
         self.list_users()
             .user_pool_id(user_pool_id)
             .set_filter(Some(filter.to_string()))
             .set_limit(Some(limit))
+            .send()
+            .await
+    }
+
+    async fn admin_delete_user_attributes(
+        &self,
+        user_pool_id: String,
+        username: String,
+        attributes: Vec<String>,
+    ) -> Result<AdminDeleteUserAttributesOutput, SdkError<AdminDeleteUserAttributesError>> {
+        self.admin_delete_user_attributes()
+            .user_pool_id(user_pool_id)
+            .username(username)
+            .set_user_attribute_names(Some(attributes))
             .send()
             .await
     }
@@ -116,14 +175,25 @@ mod tests {
     impl CognitoClient for MockCognitoClient {
         async fn list_users(
             &self,
-            _user_pool_id: &str,
-            _filter: &str,
+            _user_pool_id: String,
+            _filter: String,
             _limit: i32,
         ) -> Result<ListUsersOutput, SdkError<ListUsersError>> {
             let mut builder = ListUsersOutput::builder();
             if self.should_find_user {
                 builder = builder.users(UserType::builder().username("username").build());
             };
+            Ok(builder.build())
+        }
+
+        async fn admin_delete_user_attributes(
+            &self,
+            _user_pool_id: String,
+            _username: String,
+            _attributes: Vec<String>,
+        ) -> Result<AdminDeleteUserAttributesOutput, SdkError<AdminDeleteUserAttributesError>>
+        {
+            let builder = AdminDeleteUserAttributesOutput::builder();
             Ok(builder.build())
         }
     }
