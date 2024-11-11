@@ -11,7 +11,7 @@ use aws_sdk_cognitoidentityprovider::{
     },
 };
 use fractic_env_config::EnvVariables;
-use fractic_generic_server_error::{common::CriticalError, GenericServerError};
+use fractic_server_error::{common::CriticalError, GenericServerError};
 
 use crate::{env::CognitoEnvConfig, errors::CognitoConnectionError};
 
