@@ -11,9 +11,9 @@ use aws_sdk_cognitoidentityprovider::{
     },
 };
 use fractic_env_config::EnvVariables;
-use fractic_server_error::{common::CriticalError, GenericServerError};
+use fractic_server_error::{CriticalError, ServerError};
 
-use crate::{env::CognitoEnvConfig, errors::CognitoConnectionError};
+use crate::{env::CognitoEnvConfig, errors::CognitoCalloutError};
 
 const EMAIL_ATTRIBUTE: &str = "email";
 const USER_SUB_ATTRIBUTE: &str = "sub";
@@ -29,7 +29,7 @@ pub struct CognitoUtil<ClientImpl: CognitoClient> {
 impl CognitoUtil<aws_sdk_cognitoidentityprovider::Client> {
     pub async fn new(
         env: EnvVariables<CognitoEnvConfig>,
-    ) -> Result<CognitoUtil<aws_sdk_cognitoidentityprovider::Client>, GenericServerError> {
+    ) -> Result<CognitoUtil<aws_sdk_cognitoidentityprovider::Client>, ServerError> {
         let region_str = env.get(&CognitoEnvConfig::CognitoRegion)?;
         let region = Region::new(region_str.clone());
         let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
@@ -46,26 +46,24 @@ impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
         &self,
         attribute: &str,
         value: &str,
-    ) -> Result<Option<String>, GenericServerError> {
-        let dbg_cxt: &'static str = "get_username_from_attribute";
+    ) -> Result<Option<String>, ServerError> {
         let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?.clone();
 
         let response = self
             .client
             .list_users(user_pool_id, format!("{} = \"{}\"", attribute, value), 1)
             .await
-            .map_err(|e| CognitoConnectionError::with_debug(dbg_cxt, "", e.to_string()))?;
+            .map_err(|e| CognitoCalloutError::with_debug(&e))?;
 
         response
             .users
             .unwrap_or_default()
             .pop()
             .map(|user| {
-                user.username.ok_or(CriticalError::with_debug(
-                    dbg_cxt,
-                    "user found but username is missing",
-                    format!("attribute: {}; value: {};", attribute, value),
-                ))
+                user.username.ok_or(CriticalError::new(&format!(
+                    "User found but username is missing (attribute: '{}', value: '{}').",
+                    attribute, value
+                )))
             })
             .transpose()
     }
@@ -73,13 +71,12 @@ impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
     pub async fn get_username_from_email(
         &self,
         email: &str,
-    ) -> Result<Option<String>, GenericServerError> {
+    ) -> Result<Option<String>, ServerError> {
         self.get_username_from_attribute(EMAIL_ATTRIBUTE, email)
             .await
     }
 
-    pub async fn delete_email_for_user(&self, user_sub: &str) -> Result<(), GenericServerError> {
-        let dbg_cxt: &'static str = "delete_email_for_user";
+    pub async fn delete_email_for_user(&self, user_sub: &str) -> Result<(), ServerError> {
         let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?.clone();
 
         if let Some(username) = self
@@ -93,7 +90,7 @@ impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
                     vec![EMAIL_ATTRIBUTE.to_string()],
                 )
                 .await
-                .map_err(|e| CognitoConnectionError::with_debug(dbg_cxt, "", e.to_string()))?;
+                .map_err(|e| CognitoCalloutError::with_debug(&e))?;
         }
 
         Ok(())
