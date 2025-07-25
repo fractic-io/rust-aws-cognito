@@ -10,10 +10,9 @@ use aws_sdk_cognitoidentityprovider::{
         list_users::{ListUsersError, ListUsersOutput},
     },
 };
-use fractic_env_config::EnvVariables;
 use fractic_server_error::{CriticalError, ServerError};
 
-use crate::{env::CognitoEnvConfig, errors::CognitoCalloutError};
+use crate::{errors::CognitoCalloutError, CognitoCtxView};
 
 const EMAIL_ATTRIBUTE: &str = "email";
 const USER_SUB_ATTRIBUTE: &str = "sub";
@@ -23,21 +22,23 @@ const USER_SUB_ATTRIBUTE: &str = "sub";
 
 pub struct CognitoUtil<ClientImpl: CognitoClient> {
     client: ClientImpl,
-    env: EnvVariables<CognitoEnvConfig>,
+    user_pool_id: String,
 }
 
 impl CognitoUtil<aws_sdk_cognitoidentityprovider::Client> {
     pub async fn new(
-        env: EnvVariables<CognitoEnvConfig>,
+        ctx: &dyn CognitoCtxView,
     ) -> Result<CognitoUtil<aws_sdk_cognitoidentityprovider::Client>, ServerError> {
-        let region_str = env.get(&CognitoEnvConfig::CognitoRegion)?;
-        let region = Region::new(region_str.clone());
-        let shared_config = aws_config::defaults(BehaviorVersion::v2024_03_28())
+        let region = Region::new(ctx.cognito_region().clone());
+        let shared_config = aws_config::defaults(BehaviorVersion::v2025_01_17())
             .region(region)
             .load()
             .await;
         let client = aws_sdk_cognitoidentityprovider::Client::new(&shared_config);
-        Ok(Self { client, env })
+        Ok(Self {
+            client,
+            user_pool_id: ctx.cognito_user_pool_id().clone(),
+        })
     }
 }
 
@@ -47,11 +48,13 @@ impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
         attribute: &str,
         value: &str,
     ) -> Result<Option<String>, ServerError> {
-        let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?.clone();
-
         let response = self
             .client
-            .list_users(user_pool_id, format!("{} = \"{}\"", attribute, value), 1)
+            .list_users(
+                self.user_pool_id.clone(),
+                format!("{} = \"{}\"", attribute, value),
+                1,
+            )
             .await
             .map_err(|e| CognitoCalloutError::with_debug(&e))?;
 
@@ -77,15 +80,13 @@ impl<ClientImpl: CognitoClient> CognitoUtil<ClientImpl> {
     }
 
     pub async fn delete_email_for_user(&self, user_sub: &str) -> Result<(), ServerError> {
-        let user_pool_id = self.env.get(&CognitoEnvConfig::CognitoUserPoolId)?.clone();
-
         if let Some(username) = self
             .get_username_from_attribute(USER_SUB_ATTRIBUTE, user_sub)
             .await?
         {
             self.client
                 .admin_delete_user_attributes(
-                    user_pool_id,
+                    self.user_pool_id.clone(),
                     username,
                     vec![EMAIL_ATTRIBUTE.to_string()],
                 )
@@ -157,12 +158,8 @@ impl CognitoClient for aws_sdk_cognitoidentityprovider::Client {
 
 #[cfg(test)]
 mod tests {
-    use crate::env::{COGNITO_REGION, COGNITO_USER_POOL_ID};
-
     use super::*;
     use aws_sdk_cognitoidentityprovider::types::UserType;
-    use fractic_core::collection;
-    use fractic_env_config::EnvVariables;
 
     // Mock client implemenation.
     struct MockCognitoClient {
@@ -200,13 +197,9 @@ mod tests {
         let mock_client = MockCognitoClient {
             should_find_user: true,
         };
-        let env: EnvVariables<CognitoEnvConfig> = collection! {
-            COGNITO_REGION => "us-east-1".to_string(),
-            COGNITO_USER_POOL_ID => "us-east-1_123456789".to_string(),
-        };
         let cognito = CognitoUtil {
             client: mock_client,
-            env,
+            user_pool_id: "us-east-1_123456789".to_string(),
         };
         let username = cognito
             .get_username_from_email("abc@example.com")
@@ -220,13 +213,9 @@ mod tests {
         let mock_client = MockCognitoClient {
             should_find_user: false,
         };
-        let env: EnvVariables<CognitoEnvConfig> = collection! {
-            COGNITO_REGION => "us-east-1".to_string(),
-            COGNITO_USER_POOL_ID => "us-east-1_123456789".to_string(),
-        };
         let cognito = CognitoUtil {
             client: mock_client,
-            env,
+            user_pool_id: "us-east-1_123456789".to_string(),
         };
         let username = cognito
             .get_username_from_email("abc@example.com")

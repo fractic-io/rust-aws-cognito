@@ -8,8 +8,8 @@ edition = "2021"
 async-trait = "0.1.80"
 aws-config = "1.5.1"
 aws-sdk-cognitoidentityprovider = "1.35.0"
+fractic-context = { git = "https://github.com/fractic-io/rust-context.git" }
 fractic-core = { git = "https://github.com/fractic-io/rust-core.git" }
-fractic-env-config = { git = "https://github.com/fractic-io/rust-env-config.git" }
 fractic-server-error = { git = "https://github.com/fractic-io/rust-server-error.git" }
 
 [dev-dependencies]
