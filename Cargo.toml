@@ -11,6 +11,4 @@ aws-sdk-cognitoidentityprovider = "1.35.0"
 fractic-context = { git = "https://github.com/fractic-io/rust-context.git" }
 fractic-core = { git = "https://github.com/fractic-io/rust-core.git" }
 fractic-server-error = { git = "https://github.com/fractic-io/rust-server-error.git" }
-
-[dev-dependencies]
 tokio = { version = "1", features = ["full"] }

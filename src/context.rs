@@ -7,7 +7,9 @@ define_ctx_view!(
         COGNITO_USER_POOL_ID: String,
     },
     secrets {},
-    deps_overlay {},
+    deps_overlay {
+        dyn crate::util::CognitoBackend,
+    },
     req_impl {}
 );
 
