@@ -155,7 +155,7 @@ register_ctx_singleton!(dyn CognitoCtxView, dyn CognitoBackend, |ctx: Arc<
     dyn CognitoCtxView,
 >| async move {
     let region = Region::new(ctx.cognito_region().clone());
-    let shared_config = aws_config::defaults(BehaviorVersion::v2026_01_12())
+    let shared_config = aws_config::defaults(BehaviorVersion::latest())
         .region(region)
         .load()
         .await;
