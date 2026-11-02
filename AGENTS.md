@@ -9,4 +9,3 @@ typed errors. `src/lib.rs` → `context.rs` (`define_ctx_view!`), `errors.rs`,
   `context.rs`, the public surface `util.rs` (`CognitoUtil`) plus `pub use`s
   in `lib.rs`. A new capability is a method on the util or an `ext/` module,
   not a parallel façade.
-- Commit / PR titles: `[util] …`, `[ext] …`.
